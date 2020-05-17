@@ -1,0 +1,1 @@
+(function(){var a,b;a=function(){function a(a,b){this.key=a,this.endpoint=b}return a.prototype.push=function(a){return $.ajax({url:this.endpoint+"/e",context:document.body})},a}(),b=function(){function a(){}return a}()}).call(this)
