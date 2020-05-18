@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/RamBrowse.iml" filepath="$PROJECT_DIR$/.idea/RamBrowse.iml" />
+      <module fileurl="file://H:/Downloads/WebBrowser-python-pyqt5-14-master/WebBrowser-python-pyqt5-14-master/.idea/WebBrowser-python-pyqt5-14-master.iml" filepath="H:/Downloads/WebBrowser-python-pyqt5-14-master/WebBrowser-python-pyqt5-14-master/.idea/WebBrowser-python-pyqt5-14-master.iml" />
+    </modules>
+  </component>
+</project>
