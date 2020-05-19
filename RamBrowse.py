@@ -248,7 +248,7 @@ class MainWindow(QMainWindow):
 app = QApplication(sys.argv)
 app.setApplicationName("RamBrowse")
 app.setOrganizationName("DoesArt Studios")
-app.setOrganizationDomain("DoesArt-Studios.Github.io/RamBrowseWebsite   ")
+app.setOrganizationDomain("DoesArt-Studios.Github.io/RamBrowseWebsite")
 
 window = MainWindow()
 
