@@ -128,11 +128,11 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.about)
         help_menu.addAction(about_action)
 
-        navigate_mozarella_action = QAction(QIcon(os.path.join('images', 'lifebuoy.png')),
+        navigate_rambrowse_action = QAction(QIcon(os.path.join('images', 'lifebuoy.png')),
                                             "RamBrowse Homepage", self)
-        navigate_mozarella_action.setStatusTip("Go to the RamBrowse Homepage")
-        navigate_mozarella_action.triggered.connect(self.navigate_mozarella)
-        help_menu.addAction(navigate_mozarella_action)
+        navigate_rambrowse_action.setStatusTip("Go to the RamBrowse Homepage")
+        navigate_rambrowse_action.triggered.connect(self.navigate_rambrowse)
+        help_menu.addAction(navigate_rambrowse_action)
 
         self.add_new_tab(QUrl('http://duckduckgo.com'), 'Homepage')
 
@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
         title = self.tabs.currentWidget().page().title()
         self.setWindowTitle("%s - RamBrowse" % title)
 
-    def navigate_mozarella(self):
+    def navigate_rambrowse(self):
         self.tabs.currentWidget().setUrl(QUrl("https://DoesArt-Studios.github.io/RamBrowseWebsite"))
 
     def about(self):
@@ -248,7 +248,7 @@ class MainWindow(QMainWindow):
 app = QApplication(sys.argv)
 app.setApplicationName("RamBrowse")
 app.setOrganizationName("DoesArt Studios")
-app.setOrganizationDomain("DoesArt-Studios.Github.io/RamBrowseWebsite")
+app.setOrganizationDomain("https://DoesArt-Studios.gihtub.io/RamBrowseWebsite/")
 
 window = MainWindow()
 
