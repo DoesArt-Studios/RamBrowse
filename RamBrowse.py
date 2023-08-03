@@ -43,8 +43,8 @@ class AboutDialog(QDialog):
         logo.setPixmap(QPixmap(os.path.join('images', 'Logo.png')))
         layout.addWidget(logo)
 
-        layout.addWidget(QLabel("Version 1.0.0"))
-        layout.addWidget(QLabel("Copyright 2020 DoesArt Studios"))
+        layout.addWidget(QLabel("Version 2.0.0"))
+        layout.addWidget(QLabel("Copyright 2023 DoesArt Studios"))
 
         layout.addWidget(self.buttonBox)
 
