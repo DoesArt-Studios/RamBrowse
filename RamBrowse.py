@@ -131,9 +131,10 @@ class Tab(QWebEngineView):
         self.download_dialog.downloadProgressSignal.connect(self.update_download_progress)
         self.download_dialog.finished.connect(self.download_finished)
 
+
+
         if url:
             self.setUrl(url)
-
         self.urlChanged.connect(self.update_urlbar)
         self.loadFinished.connect(self.update_title)
 
@@ -178,7 +179,26 @@ class Tab(QWebEngineView):
     def createWebEngineProfile(self):
         profile = QWebEngineProfile(self)
         profile.downloadRequested.connect(self.on_download_requested)
+        # Set the Permissions-Policy header to exclude unrecognized features
+        headers = profile.httpUserAgentProfile().httpSettings().requestHeaders()
+        if 'Permissions-Policy' in headers:
+            policy_header = headers['Permissions-Policy']
+            policy_header = policy_header.replace('unload', '').replace('ch-ua-form-factor', '')
+            policy_header = policy_header.replace('interest-cohort', '')  # Remove interest-cohort
+            headers['Permissions-Policy'] = policy_header
+        else:
+            headers['Permissions-Policy'] = ''
+        profile.httpUserAgentProfile().httpSettings().setRequestHeaders(headers)
+
+        # Rest of the method remains the same
+        profile.settings().setAttribute(QWebEngineSettings.PluginsEnabled, True)
+        profile.settings().setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+        profile.settings().setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, True)
+        profile.settings().setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
+        profile.settings().setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+
         return profile
+
 
 
     def handle_download_requested(self, download_item):
@@ -282,8 +302,6 @@ class Tab(QWebEngineView):
         else:
             context_menu.exec_(QPoint(x, y))
 
-
-
 class ClosedTabManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -299,6 +317,7 @@ class ClosedTabManager:
             tab.setPage(tab_data['page'])
             self.main_window.tabs.addTab(tab, tab_data['label'])
             self.main_window.tabs.setCurrentWidget(tab)
+
 class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
@@ -475,6 +494,24 @@ class MainWindow(QMainWindow):
         navtb.addWidget(self.bookmarks_menu)
 
         self.addToolBar(navtb)
+
+    def createWebEngineProfile(self):
+        profile = QWebEngineProfile(self)
+
+        # Get the default content security policy of the profile
+        default_csp = profile.contentSettings().contentSecurityPolicy()
+
+        # Get the existing Permissions-Policy header (if set)
+        permissions_policy = default_csp.policy(QWebEngineSettings.PermissionsPolicy)
+
+        # Remove the 'unload' and 'ch-ua-form-factor' features, if present
+        if permissions_policy:
+            permissions_policy = permissions_policy.replace("unload=(),", "").replace("ch-ua-form-factor=(),", "")
+
+        # Set the updated Permissions-Policy header
+        default_csp.setPolicy(QWebEngineSettings.PermissionsPolicy, permissions_policy)
+
+        return profile
 
     def add_bookmark(self):
         current_tab = self.tabs.currentWidget()
@@ -688,14 +725,13 @@ class MainWindow(QMainWindow):
             self.current_tab.navigate_forward()
 
     def navigate_home(self):
-        if self.current_tab:
-            self.current_tab.navigate(QUrl("http://duckduckgo.com"))
+        self.current_tab.setUrl(QUrl("http://duckduckgo.com/"))
 
     def navigate_to_url(self):
+        q = QUrl(self.urlbar.text())
+        if q.scheme() == "":
+            q.setScheme("http")
         if self.current_tab:
-            q = QUrl(self.urlbar.text())
-            if q.scheme() == "":
-                q.setScheme("http")
             self.current_tab.navigate(q)
 
     def update_urlbar(self, q, browser=None):
@@ -757,6 +793,11 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
 
     return os.path.join(base_path, relative_path)
+
+
+home = "https://duckduckgo.com/"
+
+
 app = QApplication(sys.argv)
 app.setWindowIcon(QIcon(resource_path('logo.ico')))
 app.setApplicationName("RamBrowse")
