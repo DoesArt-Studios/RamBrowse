@@ -7,8 +7,12 @@ from PySide6.QtMultimedia import *
 from PySide6.QtWebEngineCore import *
 from PySide6.QtNetwork import *
 
+
+import platform
+import requests
 import os
 import sys
+import tqdm
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -62,90 +66,132 @@ class DownloadItem(QWebEngineDownloadRequest):
     def download_finished(self):
         self.download_progress_signal.emit(0, 1)  # Emit the signal to set progress to 100%
 
-class DownloadDialog(QDialog):
-    downloadProgressSignal = Signal(int, int)
-    def __init__(self, download_item, *args, **kwargs):
-        super(DownloadDialog, self).__init__(*args, **kwargs)
-        self.setWindowTitle("Download")
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.download_item = download_item
+class TabWidget(QTabWidget):
+    def __init__(self):
+        super().__init__()
 
-        layout = QVBoxLayout()
+    def add_new_tab(self, browser, label):
+        i = self.addTab(browser, label)
+        browser.title_changed_connection = browser.titleChanged.connect(self.update_tab_title)
+        return i
 
-        filename_label = QLabel("File Name:")
-        self.filename_edit = QLineEdit(download_item.suggestedFileName() if download_item else "")
-        layout.addWidget(filename_label)
-        layout.addWidget(self.filename_edit)
+class WebBrowserTab(QWebEngineView):
+    titleChanged = Signal(str)
 
-        self.progress_bar = QProgressBar()
-        layout.addWidget(self.progress_bar)
+    def __init__(self, url, label):
+        super().__init__()
 
-        self.download_btn = QPushButton("Download")
-        self.download_btn.clicked.connect(self.download)
-        self.download_btn.setEnabled(download_item is not None)
-        layout.addWidget(self.download_btn)
+        self.download_progress_bar = QProgressBar()  # Create a progress bar
+        self.download_progress_bar.hide()  # Initially hide the progress bar
+        self.download_progress_bar.setMaximum(100)  # Set the maximum value
 
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.cancel)
-        layout.addWidget(self.cancel_btn)
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.download_progress_bar)
+        self.layout.addWidget(self)
 
-        self.setLayout(layout)
+        self.setLayout(self.layout)
 
-        if download_item:
-            download_item.downloadProgress.connect(self.update_progress)
-            download_item.finished.connect(self.download_finished)
+        self.page().urlChanged.connect(self.update_url)
+        self.load(url)
 
-    def update_progress(self, bytes_received, bytes_total):
-        if bytes_total > 0:
-            self.progress_bar.setMaximum(bytes_total)
-            self.progress_bar.setValue(bytes_received)
+        self.label = label
 
-    def download_finished(self):
-        self.close()
+    def download_requested(self, download_item):
+        save_path = os.path.join(self.parent().download_path, download_item.suggestedFileName())
+        self.download_file(download_item.url().toString(), save_path, 'application/octet-stream')
 
-    def download(self):
-        filename, _ = QInputDialog.getText(self, "Save File", "Enter file name:", QLineEdit.Normal, self.download_item.suggestedFileName())
-        if filename:
-            # Set the suggested file name for the download
-            self.download_item.setDownloadFileName(filename)
-            self.download_item.accept()
+    def download_file(self, url, save_path, mime_type):
+        headers = {'Accept': mime_type}
+        response = requests.get(url, headers=headers, stream=True)
+        if response.status_code == 200:
+            total_size = int(response.headers.get('content-length', 0))
+            chunk_size = 1024
+            downloaded = 0
 
-    def cancel(self):
-        self.download_item.cancel()
-        self.close()
+            with open(save_path, 'wb') as file:
+                for data in response.iter_content(chunk_size=chunk_size):
+                    downloaded += len(data)
+                    file.write(data)
+                    progress = int((downloaded / total_size) * 100)
+                    self.download_progress_bar.setValue(progress)  # Update the progress bar
+
+            print("Download complete")
+            self.download_progress_bar.hide()  # Hide the progress bar when download is complete
+
+    def update_url(self, q):
+        self.url = q
+        self.titleChanged.emit(self.label)  # Emit the signal with the stored label
+
+
+
+class TitleChangedSignal(QObject):
+    changed = Signal(str)
 
 class Tab(QWebEngineView):
+    TitleChangedSignal = Signal(str)
     titleChanged = Signal(str)
     windowTitleChanged = Signal(str)
 
-    def __init__(self, url=None):
+    def __init__(self, parent=None, url=None):
         super(Tab, self).__init__()
         self.current_title = ""
+        self.parent_window = parent  # Store a reference to the parent MainWindow
         self.history = []
         self.history_index = -1  # Index to track current position in the history
         self.media_player = None  # Initialize media player as None
         self.urlbar = QLineEdit()  # Add the urlbar attribute
 
-        # Create a single instance of the DownloadDialog to be reused for downloads
-        self.download_dialog = DownloadDialog(None, self)
-        self.download_dialog.downloadProgressSignal.connect(self.update_download_progress)
-        self.download_dialog.finished.connect(self.download_finished)
+        self.webpage = QWebEnginePage(self)
+        self.setPage(self.webpage)
+        
+        self.webpage.titleChanged.connect(self.update_tab_label)
+        self.webpage.urlChanged.connect(self.update_urlbar)
 
 
+
+
+
+        self.title_changed_signal = TitleChangedSignal()  # Custom signal for title change # Create a custom signal
+        self.title_changed_signal.changed.connect(self.update_tab_label)  # Connect custom signal
 
         if url:
             self.setUrl(url)
+        else:
+            self.setUrl(QUrl('http://duckduckgo.com'))
+
+        self.page().titleChanged.connect(self.update_tab_label)  # Connect titleChanged signal
+        if url:
+            self.setUrl(url)
         self.urlChanged.connect(self.update_urlbar)
+
+        self.tab_index = None  # Add a variable to keep track of the tab's index in the QTabWidget
+
+        # Connect the loadFinished signal to the update_title method
         self.loadFinished.connect(self.update_title)
 
-        # Connect the downloadRequested signal to the handle_download_requested method
-        self.page().profile().downloadRequested.connect(self.handle_download_requested)
+
+    def closeEvent(self, event):
+        # Disconnect the titleChanged signal when the tab is closed
+        self.title_changed_signal.changed.disconnect(self.update_tab_label)
+        super(Tab, self).closeEvent(event)
+
+
+    def update_tab_label(self, title):
+        self.TitleChangedSignal.emit(title)  # Emit the title changed signal
+
+
+
+    def titleChanged(self, title):
+        self.title_changed_signal.changed.emit(title)  # Emit custom signal with the new title
+
+
 
     def update_title(self):
         title = self.page().title()
+        print("Title Changed:", title)
         if title != self.current_title:
             self.current_title = title
-            self.titleChanged.emit(title)
+            self.titleChanged.emit(title)  # Emit the signal
             self.windowTitleChanged.emit(f"{title} - RamBrowse")
 
     def update_urlbar(self, q):
@@ -199,25 +245,14 @@ class Tab(QWebEngineView):
 
         return profile
 
+    def close_current_tab(self, index):
+        if self.tabs.count() < 2:
+            return
+        removed_tab = self.tabs.widget(index)  # Store the removed tab
 
+        # Close the tab, which will trigger the closeEvent and disconnect the signal
+        removed_tab.close()
 
-    def handle_download_requested(self, download_item):
-        if download_item is not None:
-            self.download_dialog.download_item = download_item
-            self.download_dialog.filename_edit.setText(download_item.suggestedFileName())
-            self.download_dialog.download_btn.setEnabled(True)  # Enable the download button
-            self.download_dialog.exec_()
-
-    def update_download_progress(self, bytes_received, bytes_total):
-        if self.download_dialog.isVisible():
-            # If the download dialog is open, update the progress
-            self.download_dialog.progress_bar.setMaximum(bytes_total)
-            self.download_dialog.progress_bar.setValue(bytes_received)
-
-    def download_finished(self):
-        # Reset the download dialog after the download is finished
-        self.download_dialog.progress_bar.setValue(0)
-        self.download_dialog.progress_bar.setMaximum(100)
 
     def navigate(self, qurl):
         if self.url() != qurl:
@@ -317,6 +352,8 @@ class ClosedTabManager:
             tab.setPage(tab_data['page'])
             self.main_window.tabs.addTab(tab, tab_data['label'])
             self.main_window.tabs.setCurrentWidget(tab)
+        else:
+            return
 
 class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
@@ -326,6 +363,11 @@ class MainWindow(QMainWindow):
 
         self.closed_tab_manager = ClosedTabManager(self)
 
+        self.browser = QWebEngineView()
+        self.setCentralWidget(self.browser)
+
+
+
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.tabs.tabBarDoubleClicked.connect(self.tab_open_doubleclick)
@@ -333,8 +375,10 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.current_tab_changed)
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_current_tab)
-
+        self.tabs.currentChanged.connect(self.tab_changed)
         self.setCentralWidget(self.tabs)
+        # Initialize the current_tab_index attribute to None
+        self.current_tab_index = None
 
         navtb = QToolBar("Navigation")
         navtb.setObjectName("NavigationToolbar")  # Set the object name for the navigation toolbar
@@ -392,7 +436,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(reopen_tab_action)
 
         self.shortcut_close = QShortcut(QKeySequence('Ctrl+W'), self)
-        self.shortcut_close.activated.connect(self.close_current_tab)
+        self.shortcut_close.activated.connect(self.close_current_tab_shortcut)
 
         open_file_action = QAction(QIcon(resource_path('images/disk--arrow.png')), "Open file...", self)
         open_file_action.setStatusTip("Open from file")
@@ -444,20 +488,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RamBrowse")
         self.setWindowIcon(QIcon(resource_path('images/Logo.png')))
 
-        # Add Downloads menu and download manager
-        self.download_menu = self.menuBar().addMenu("&Downloads")
-        self.download_manager = QNetworkAccessManager(self)
-        self.download_manager.finished.connect(self.download_finished)
 
-        # Create a single instance of the DownloadDialog to be reused for downloads
-        self.download_dialog = DownloadDialog(None, self)
-        # Connect the custom signal to the update_download_progress method in MainWindow
-        self.download_dialog.downloadProgressSignal.connect(self.update_download_progress)
-        self.download_dialog.finished.connect(self.download_finished)
+        self.download_path = os.path.expanduser("~") + "/Downloads/"
+        if platform.system() == "Windows":
+            self.download_path = os.path.expanduser("~") + "\\Downloads\\"
 
-        # Handle download requests within the tab
-        profile = QWebEngineProfile.defaultProfile()
-        profile.downloadRequested.connect(self.on_download_requested)
+        self.browser.page().profile().downloadRequested.connect(self.download_requested)
+
+        self.show()
+
+
 
         # Add tooltips to toolbar buttons
         back_btn.setToolTip("Go Back (Alt+Left)")
@@ -473,27 +513,19 @@ class MainWindow(QMainWindow):
         home_btn.setStatusTip("Go to the homepage")
         stop_btn.setStatusTip("Stop loading the current page")
 
-        # Add the "Bookmark" action to the toolbar
-        self.bookmark_action = QAction(QIcon(resource_path('images/bookmark.png')), "Bookmark", self)
-        self.bookmark_action.triggered.connect(self.add_bookmark)
-        navtb.insertAction(navtb.actions()[0], self.bookmark_action)  # Insert the bookmark action at the beginning
-        navtb.addAction(self.bookmark_action)
+        self.bookmarks = {}  # Initialize the bookmarks attribute as an empty dictionary
 
-        # Create a Bookmarks menu
-        self.bookmark_counter = 0
-        self.bookmarks_menu = QMenu("Bookmarks", self)
-        navtb.addWidget(self.bookmarks_menu)
 
-        self.update_bookmark_counter()  # Call the function to initialize the bookmark counter label
+        self.bookmarks_toolbar = self.addToolBar("Bookmarks")
+        self.bookmarks_toolbar.setObjectName("BookmarksToolbar")
+        self.add_bookmark_action = QAction(QIcon(resource_path('images/bookmark.png')), "Add Bookmark", self)
+        self.add_bookmark_action.triggered.connect(self.add_bookmark)
+        self.bookmarks_toolbar.addAction(self.add_bookmark_action)
 
-        # Initialize a dictionary to store the bookmarks
-        self.bookmarks = {}
-        # Add separator and bookmark button to the toolbar
-        navtb.addSeparator()
-        navtb.addAction(self.bookmark_action)
-        navtb.addWidget(self.bookmarks_menu)
 
         self.addToolBar(navtb)
+
+
 
     def createWebEngineProfile(self):
         profile = QWebEngineProfile(self)
@@ -518,30 +550,13 @@ class MainWindow(QMainWindow):
         current_url = current_tab.url().toString()
         current_title = current_tab.title()
 
-        # Check if the bookmark is already stored
-        if current_url in self.bookmarks:
-            return
-
-        # Add the bookmark to the bookmarks menu
-        bookmark_action = QAction(current_title, self)
-        bookmark_action.setData(current_url)
-        bookmark_action.triggered.connect(self.navigate_to_bookmark)
-        self.bookmarks_menu.addAction(bookmark_action)
-
-        # Store the bookmark in the bookmarks dictionary
-        self.bookmarks[current_url] = current_title
-        self.bookmark_counter += 1  # Increment the bookmark counter
-        self.update_bookmark_counter()  # Update the bookmark counter label
-
-        navtb = self.findChild(QToolBar, "NavigationToolbar")  # Find the navigation toolbar by its object name
-        if navtb is not None:
-            navtb.insertAction(navtb.actions()[0], self.bookmark_action)  # Insert the bookmark action at the beginning
-        else:
-            print("Navigation toolbar not found!")
-        navtb.insertAction(navtb.actions()[0], self.bookmark_action)  # Insert the bookmark action at the beginning
-
-    def update_bookmark_counter(self):
-        self.bookmark_action.setText("Bookmark ({})".format(self.bookmark_counter))
+        if current_url not in self.bookmarks:
+            bookmark_action = QAction(current_title, self)
+            bookmark_action.setData(current_url)
+            bookmark_action.triggered.connect(self.navigate_to_bookmark)
+            self.bookmarks_toolbar.addAction(bookmark_action)
+            self.bookmarks[current_url] = current_title
+            self.update_bookmark_counter()
 
     def navigate_to_bookmark(self):
         action = self.sender()
@@ -549,9 +564,30 @@ class MainWindow(QMainWindow):
             url = action.data()
             self.tabs.currentWidget().setUrl(QUrl(url))
 
+
+    def update_bookmarks_toolbar(self):
+        self.bookmarks_toolbar.clear()  # Clear existing actions in the toolbar
+        self.bookmarks_toolbar.addAction(self.add_bookmark_action)  # Re-add the add bookmark action
+        for url, title in self.bookmarks.items():
+            bookmark_action = QAction(title, self)
+            bookmark_action.setData(url)
+            bookmark_action.triggered.connect(self.navigate_to_bookmark)
+            self.bookmarks_toolbar.addAction(bookmark_action)
+
+    def update_bookmark_counter(self):
+        self.add_bookmark_action.setText("Add Bookmark ({})".format(len(self.bookmarks)))
+
+
     def keyPressEvent(self, event):
         # Handle keyboard shortcuts for better user experience
         modifiers = event.modifiers()
+        if event.key() == Qt.Key_W and event.modifiers() == Qt.ControlModifier:
+            current_index = self.tabs.currentIndex()
+            if current_index >= 0:
+                self.close_current_tab(current_index)
+            print("Ctrl+W pressed")  # Add this line
+
+
         if modifiers == Qt.AltModifier or modifiers == (Qt.AltModifier | Qt.AltModifier):
             if event.key() == Qt.Key_Left:  # Alt+Left for Back
                 self.tabs.currentWidget().back()
@@ -566,6 +602,7 @@ class MainWindow(QMainWindow):
 
     def add_new_tab(self, qurl=None, label="Blank"):
         tab = Tab(qurl)
+        tab.title_changed_signal.changed.connect(self.update_tab_title)
 
         if qurl is None:
             qurl = QUrl('https://duckduckgo.com/')
@@ -580,68 +617,64 @@ class MainWindow(QMainWindow):
                                    self.update_urlbar(qurl, browser))
         browser.loadFinished.connect(lambda _, i=i, browser=browser:
                                      self.tabs.setTabText(i, browser.page().title()))
-        browser.titleChanged.connect(lambda title, i=i: self.tabs.setTabText(i, title))
+        # Connect the titleChanged signal to update_tab_label with a lambda function
+        browser.titleChanged.connect(lambda title: self.update_tab_title(title))
         browser.windowTitleChanged.connect(lambda title: self.setWindowTitle(title))
 
         # Enable video support in the current tab
         browser.page().featurePermissionRequested.connect(self.handle_feature_permission)
         browser.page().settings().setAttribute(QWebEngineSettings.JavascriptEnabled, True)
 
-        # Create a single instance of the DownloadDialog to be reused for downloads
-        self.download_dialog = DownloadDialog(None, self)
-        # Connect the custom signal to the update_download_progress method in MainWindow
-        self.download_dialog.downloadProgressSignal.connect(self.update_download_progress)
-        self.download_dialog.finished.connect(self.download_finished)
 
-        # Connect the context menu to the contextMenuEvent method
-        browser.setContextMenuPolicy(Qt.CustomContextMenu)
-        browser.customContextMenuRequested.connect(self.context_menu_requested)
 
-        # Handle download requests within the tab
-        tab.page().profile().downloadRequested.connect(self.on_download_requested)
 
-        # Connect the custom signal to the update_download_progress method in MainWindow
-        tab.download_dialog.downloadProgressSignal.connect(self.update_download_progress)
+
         self.tabs.setCurrentWidget(tab)
         self.current_tab = tab  # Set the current_tab attribute when a new tab is added
 
-    def context_menu_requested(self, pos):
+    def get_current_tab(self):
+        """
+        Returns the currently active tab (QWebEngineView instance).
+        """
+        return self.tabs.currentWidget()
+
+    def tab_changed(self, index):
+        self.current_tab_index = index
+
+        if self.current_tab_index is not None:
+            previous_tab = self.tabs.widget(self.current_tab_index)
+            if hasattr(previous_tab, 'title_changed_connection'):
+                previous_tab.titleChanged.disconnect(previous_tab.title_changed_connection)
+
         current_tab = self.tabs.currentWidget()
-        hit_test_result = current_tab.hitTest(pos)
-        if not hit_test_result.isContentEditable():
-            menu = QMenu(self)
+        current_tab.title_changed_connection = current_tab.titleChanged.connect(self.update_tab_title)
 
-            # Add the "Open Link in New Tab" action to the context menu
-            link_url = hit_test_result.linkUrl()
-            if not link_url.isEmpty():
-                open_link_in_new_tab_action = QAction("Open Link in New Tab", self)
-                open_link_in_new_tab_action.triggered.connect(lambda: self.add_new_tab(link_url, "Link"))
-                menu.addAction(open_link_in_new_tab_action)
+    def download_requested(self, download_item):
+        options = QFileDialog.Options()
+        options |= QFileDialog.ReadOnly
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.AnyFile)
+        save_path, _ = file_dialog.getSaveFileName(
+            self,
+            "Save File",
+            os.path.join(self.download_path, download_item.suggestedFileName()),
+            "All Files (*)",
+            options=options,
+        )
 
-            # Add the "Bookmark" action to the context menu
-            bookmark_action = QAction("Bookmark", self)
-            bookmark_action.triggered.connect(self.add_bookmark)
-            menu.addAction(bookmark_action)
+        if save_path:
+            self.download_file(download_item.url().toString(), save_path)
 
-            menu.exec_(current_tab.mapToGlobal(pos))
+    def download_file(self, url, save_path):
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            total_size = int(response.headers.get('content-length', 0))
+            chunk_size = 1024
+            with open(save_path, 'wb') as file:
+                for data in response.iter_content(chunk_size=chunk_size):
+                    file.write(data)
+            print("Download complete.")
 
-    def on_download_requested(self, download_item):
-        if download_item is not None:
-            self.download_dialog.download_item = download_item
-            self.download_dialog.filename_edit.setText(download_item.suggestedFileName())
-            self.download_dialog.download_btn.setEnabled(True)  # Enable the download button
-            self.download_dialog.exec_()
-
-    def update_download_progress(self, bytes_received, bytes_total):
-        if self.download_dialog.isVisible():
-            # If the download dialog is open, update the progress
-            self.download_dialog.progress_bar.setMaximum(bytes_total)
-            self.download_dialog.progress_bar.setValue(bytes_received)
-
-    def download_finished(self):
-        # Reset the download dialog after the download is finished
-        self.download_dialog.progress_bar.setValue(0)
-        self.download_dialog.progress_bar.setMaximum(100)
 
     def show_notification(self, title, message):
         notification = QSystemTrayIcon(self)
@@ -658,21 +691,34 @@ class MainWindow(QMainWindow):
         self.update_urlbar(qurl, self.tabs.currentWidget())
         self.update_title(self.tabs.currentWidget())
 
-
-
-    def close_current_tab(self):
+    def close_current_tab(self, index):
         if self.tabs.count() < 2:
             return
+        if index is None:  # No tab index provided, use current
+            index = self.tabs.currentIndex()
 
-        index = self.tabs.currentIndex()
-        tab_widget = self.tabs.widget(index)
+        widget = self.tabs.widget(index)
+        if widget is not None:
+
+            removed_tab = self.tabs.widget(index)
+
+        # Check if the removed_tab is not None before disconnecting the signal
+        if removed_tab is not None:
+            removed_tab.titleChanged.disconnect(self.update_tab_title)
+
         self.closed_tab_manager.add_closed_tab({
-            'url': tab_widget.url(),
-            'label': self.tabs.tabText(index),
-            'page': tab_widget.page()
+            'url': removed_tab.url() if removed_tab else None,
+            'label': self.tabs.tabText(index) if removed_tab else None,
+            'page': removed_tab.page() if removed_tab else None
         })
+
         self.tabs.removeTab(index)
 
+        # Update current_tab
+        self.current_tab = self.tabs.currentWidget()
+        if self.current_tab:
+            # Reconnect the signal to the method in the current active tab
+            self.current_tab.titleChanged.connect(self.update_tab_title)
 
     def update_title(self, browser):
         if browser != self.tabs.currentWidget():
@@ -728,14 +774,24 @@ class MainWindow(QMainWindow):
         self.current_tab.setUrl(QUrl("http://duckduckgo.com/"))
 
     def navigate_to_url(self):
-        q = QUrl(self.urlbar.text())
-        if q.scheme() == "":
-            q.setScheme("http")
-        if self.current_tab:
-            self.current_tab.navigate(q)
+        input_text = self.urlbar.text()
+        if input_text:
+           # Check if the input is a valid URL
+            q = QUrl(input_text)
+            if q.scheme() == "":
+                # If it's not a valid URL, treat it as a search query
+                search_query = input_text.replace(" ", "+")  # Replace spaces with '+' for URL
+                search_url = QUrl("https://duckduckgo.com/?q=" + search_query)
+                current_tab = self.get_current_tab()
+                if current_tab:
+                    current_tab.setUrl(search_url)
+            else:
+                current_tab = self.get_current_tab()
+                if current_tab:
+                    current_tab.setUrl(q)
 
     def update_urlbar(self, q, browser=None):
-        if browser != self.tabs.currentWidget():
+        if browser != self.get_current_tab():
             # If this signal is not from the current tab, ignore
             return
 
@@ -749,10 +805,15 @@ class MainWindow(QMainWindow):
         self.urlbar.setText(q.toString())
         self.urlbar.setCursorPosition(0)
 
-    def update_tab_label(self, title):
+    def update_tab_title(self, title):
         current_tab = self.tabs.currentWidget()
         index = self.tabs.indexOf(current_tab)
         self.tabs.setTabText(index, title)
+
+    def close_current_tab_shortcut(self):
+        current_index = self.tabs.currentIndex()
+        if current_index >= 0:
+            self.close_current_tab(current_index)
 
     def closeEvent(self, event):
         # Handle window title when closing the last tab
@@ -798,12 +859,15 @@ def resource_path(relative_path):
 home = "https://duckduckgo.com/"
 
 
-app = QApplication(sys.argv)
-app.setWindowIcon(QIcon(resource_path('logo.ico')))
-app.setApplicationName("RamBrowse")
-app.setOrganizationName("DoesArt Studios")
-app.setOrganizationDomain("https://DoesArt-Studios.gihtub.io/RamBrowseWebsite/")
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    app.setWindowIcon(QIcon(resource_path('logo.ico')))
+    app.setApplicationName("RamBrowse")
+    app.setOrganizationName("DoesArt Studios")
+    app.setOrganizationDomain("https://DoesArt-Studios.gihtub.io/RamBrowseWebsite/")
 
-window = MainWindow()
+    app.exec()
 
-app.exec()
+if __name__ == '__main__':
+    main()
