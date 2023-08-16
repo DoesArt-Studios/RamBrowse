@@ -438,21 +438,6 @@ class MainWindow(QMainWindow):
         self.shortcut_close = QShortcut(QKeySequence('Ctrl+W'), self)
         self.shortcut_close.activated.connect(self.close_current_tab_shortcut)
 
-        open_file_action = QAction(QIcon(resource_path('images/disk--arrow.png')), "Open file...", self)
-        open_file_action.setStatusTip("Open from file")
-        open_file_action.triggered.connect(self.open_file)
-        file_menu.addAction(open_file_action)
-
-        save_file_action = QAction(QIcon(resource_path('images/disk--pencil.png')), "Save Page As...", self)
-        save_file_action.setStatusTip("Save current page to file")
-        save_file_action.triggered.connect(self.save_file)
-        file_menu.addAction(save_file_action)
-
-        print_action = QAction(QIcon(resource_path('images/printer.png')), "Print...", self)
-        print_action.setStatusTip("Print current page")
-        print_action.triggered.connect(self.print_page)
-        file_menu.addAction(print_action)
-
         help_menu = self.menuBar().addMenu("&Help")
 
         about_action = QAction(QIcon(resource_path('images/question.png')), "About RamBrowse", self)
@@ -735,32 +720,6 @@ class MainWindow(QMainWindow):
         dlg = AboutDialog()
         dlg.exec_()
 
-    def open_file(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Open file", "",
-                                                  "Hypertext Markup Language (*.htm *.html);;"
-                                                  "All files (*.*)")
-
-        if filename:
-            with open(filename, 'r') as f:
-                html = f.read()
-
-            self.tabs.currentWidget().setHtml(html)
-            self.urlbar.setText(filename)
-
-    def save_file(self):
-        filename, _ = QFileDialog.getSaveFileName(self, "Save Page As", "",
-                                                  "Hypertext Markup Language (*.htm *html);;"
-                                                  "All files (*.*)")
-
-        if filename:
-            html = self.tabs.currentWidget().page().toHtml()
-            with open(filename, 'w') as f:
-                f.write(html.encode('utf8'))
-
-    def print_page(self):
-        dlg = QPrintPreviewDialog()
-        dlg.paintRequested.connect(self.browser.print_)
-        dlg.exec_()
 
     def navigate_back(self):
         if self.current_tab:
