@@ -7,7 +7,6 @@ from PySide6.QtMultimedia import *
 from PySide6.QtWebEngineCore import *
 from PySide6.QtNetwork import *
 
-
 import platform
 import requests
 import os
@@ -122,7 +121,25 @@ class WebBrowserTab(QWebEngineView):
         self.url = q
         self.titleChanged.emit(self.label)  # Emit the signal with the stored label
 
+class HistoryManager:
+    def __init__(self):
+        self.history_list = []  # List to store history items
 
+    def add_history_item(self, url, title):
+        self.history_list.append({
+            'url': url,
+            'title': title
+        })
+
+    def get_history(self):
+        return self.history_list
+
+    def clear_history(self):
+        self.history_list.clear()
+
+    def remove_history_item(self, index):
+        if 0 <= index < len(self.history_list):
+            del self.history_list[index]
 
 class TitleChangedSignal(QObject):
     changed = Signal(str)
@@ -140,6 +157,7 @@ class Tab(QWebEngineView):
         self.history_index = -1  # Index to track current position in the history
         self.media_player = None  # Initialize media player as None
         self.urlbar = QLineEdit()  # Add the urlbar attribute
+        self.history_manager = HistoryManager()  # Initialize history manager
 
         self.webpage = QWebEnginePage(self)
         self.setPage(self.webpage)
@@ -282,6 +300,8 @@ class Tab(QWebEngineView):
             self.history.append(qurl)
             self.history_index = len(self.history) - 1
 
+            # Add entry to history manager
+            self.history_manager.add_history_item(qurl.toString(), self.page().title())
 
 
     def contextMenuEvent(self, event):
@@ -337,6 +357,39 @@ class Tab(QWebEngineView):
         else:
             context_menu.exec_(QPoint(x, y))
 
+
+class HistoryDialog(QDialog):
+    def __init__(self, history, parent=None):
+        super(HistoryDialog, self).__init__(parent)
+        self.history_manager = history
+        self.setWindowTitle("History")
+        self.setModal(False)
+
+        self.layout = QVBoxLayout(self)
+
+        self.history_list = QListWidget(self)
+        self.layout.addWidget(self.history_list)
+
+        for item in history:
+            self.history_list.addItem(f"{item['title']} ({item['url']})")
+
+        self.history_list.itemDoubleClicked.connect(self.navigate_from_history)
+
+        self.setLayout(self.layout)
+
+    def update_history_list(self):
+        self.history_list.clear()
+        for item in self.history_manager.get_history():
+            self.history_list.addItem(f"{item['title']} ({item['url']})")
+    def navigate_from_history(self, item):
+        url = item.text().split('(')[-1].strip(')')
+        qurl = QUrl(url)
+        self.parent().tabs.currentWidget().setUrl(qurl)
+        self.accept()
+
+    def refresh(self):
+        self.update_history_list()  # Call this method to refresh the history list
+
 class ClosedTabManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -355,6 +408,8 @@ class ClosedTabManager:
         else:
             return
 
+
+
 class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
@@ -365,7 +420,8 @@ class MainWindow(QMainWindow):
 
         self.browser = QWebEngineView()
         self.setCentralWidget(self.browser)
-
+        self.history_manager = HistoryManager()
+        self.history_dialog = None  # Initialize the history dialog as None
 
 
         self.tabs = QTabWidget()
@@ -435,6 +491,9 @@ class MainWindow(QMainWindow):
         reopen_tab_action.setShortcut(QKeySequence("Ctrl+Shift+T"))
         file_menu.addAction(reopen_tab_action)
 
+        self.shortcut_close_alltabs = QShortcut(QKeySequence('Ctrl+Shift+W'), self)
+        self.shortcut_close_alltabs.activated.connect(quit)
+
         self.shortcut_close = QShortcut(QKeySequence('Ctrl+W'), self)
         self.shortcut_close.activated.connect(self.close_current_tab_shortcut)
 
@@ -458,6 +517,11 @@ class MainWindow(QMainWindow):
         # Keep a reference to the QWebEngineSettings object
         self.web_engine_settings = self.tabs.currentWidget().page().settings()
 
+        self.history_button = QAction("History", self)
+        self.history_button.setStatusTip("Show History")
+        self.history_button.triggered.connect(self.show_history)
+        navtb.addAction(self.history_button)
+
         # Add the buttons to the toolbar
         navtb.addAction(back_btn)
         navtb.addAction(next_btn)
@@ -468,7 +532,9 @@ class MainWindow(QMainWindow):
         navtb.addWidget(self.urlbar)
         navtb.addAction(stop_btn)
 
+
         self.addToolBar(navtb)  # Add the custom toolbar to the main window
+
 
         self.setWindowTitle("RamBrowse")
         self.setWindowIcon(QIcon(resource_path('images/Logo.png')))
@@ -510,6 +576,18 @@ class MainWindow(QMainWindow):
 
         self.addToolBar(navtb)
 
+        # Connect signals
+        self.tabs.currentWidget().urlChanged.connect(self.handle_url_changed)
+
+    def handle_url_changed(self, qurl):
+        if self.tabs.currentWidget():
+            title = self.tabs.currentWidget().page().title()
+            self.history_manager.add_history_item(qurl.toString(), title)
+
+    def show_history(self):
+        if self.history_dialog is None or not self.history_dialog.isVisible():
+            self.history_dialog = HistoryDialog(self.history_manager.get_history(), self)
+        self.history_dialog.show()  # Show the dialog non-modally
 
 
     def createWebEngineProfile(self):
